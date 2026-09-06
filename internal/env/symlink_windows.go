@@ -129,12 +129,10 @@ func RemoveDirSymlink(link string) error {
 
 // IsDirSymlink checks if the given path is a directory junction or symlink
 func IsDirSymlink(path string) bool {
-	fi, err := os.Lstat(path)
-	if err != nil {
-		return false
-	}
-	// Check for reparse point (junction or symlink)
-	return fi.Mode()&os.ModeSymlink != 0
+	// Readlink recognizes both junctions and symbolic links, including dangling
+	// links. Since Go 1.23, junctions no longer have os.ModeSymlink set.
+	_, err := os.Readlink(path)
+	return err == nil
 }
 
 // ReadDirSymlink reads the target of a directory junction or symlink
