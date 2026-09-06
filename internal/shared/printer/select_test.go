@@ -75,3 +75,55 @@ func TestSelect_Show(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSearchPreservesOrder(t *testing.T) {
+	options := []*KV{
+		{Key: "24.1.0", Value: "24.1.0 (Current)"},
+		{Key: "22.15.0", Value: "22.15.0 (LTS Jod)"},
+		{Key: "20.19.0", Value: "20.19.0 (LTS Iron)"},
+		{Key: "18.20.8", Value: "18.20.8 (LTS Hydrogen)"},
+	}
+	for _, tc := range []struct {
+		name, query string
+		want        []*KV
+	}{
+		{"empty", "", options},
+		{"lts", "lts", options[1:]},
+		{"uppercase", "LTS", options[1:]},
+		{"mixed case", "LtS", options[1:]},
+		{"fuzzy subsequence", "ls", options[1:]},
+		{"no match", "not-a-version", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &PageKVSelect{Options: options, fuzzySearchString: tc.query}
+			s.search()
+			assertSearchOptions(t, s.searchOptions, tc.want)
+			// Clearing a filter must restore the full original sequence.
+			s.fuzzySearchString = ""
+			s.search()
+			assertSearchOptions(t, s.searchOptions, options)
+		})
+	}
+}
+
+func TestSearchPreservesDuplicateLabels(t *testing.T) {
+	options := []*KV{
+		{Key: "first", Value: "22.15.0 (LTS)"},
+		{Key: "second", Value: "22.15.0 (LTS)"},
+	}
+	s := &PageKVSelect{Options: options, fuzzySearchString: "lts"}
+	s.search()
+	assertSearchOptions(t, s.searchOptions, options)
+}
+
+func assertSearchOptions(t *testing.T, got, want []*KV) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %d options, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("option %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

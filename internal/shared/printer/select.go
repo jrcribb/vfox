@@ -18,8 +18,6 @@ package printer
 
 import (
 	"fmt"
-	"sort"
-	"strings"
 
 	"atomicgo.dev/cursor"
 	"atomicgo.dev/keyboard"
@@ -51,24 +49,6 @@ type PageKVSelect struct {
 type KV struct {
 	Key   string
 	Value string
-}
-
-type ranks fuzzy.Ranks
-
-func (r ranks) Len() int {
-	return len(r)
-}
-
-func (r ranks) Swap(i, j int) {
-	r[i], r[j] = r[j], r[i]
-}
-
-func (r ranks) Less(i, j int) bool {
-	if strings.Contains(r[i].Target, r[i].Source) {
-		return true
-	}
-
-	return r[i].Distance < r[j].Distance
 }
 
 func (s *PageKVSelect) changeIndex(value int) {
@@ -117,20 +97,12 @@ func (s *PageKVSelect) renderSelect() string {
 }
 
 func (s *PageKVSelect) search() {
-	// find options that match fuzzy search string
-	var optionMap = make(map[string]*KV)
-	var valueArr []string
-	for _, kv := range s.Options {
-		optionMap[kv.Value] = kv
-		valueArr = append(valueArr, kv.Value)
-	}
-	rankedResults := ranks(fuzzy.RankFindFold(s.fuzzySearchString, valueArr))
-	if s.fuzzySearchString != "" {
-		sort.Sort(rankedResults)
-	}
+	// Filter without reordering the versions supplied by the plugin.
 	s.searchOptions = nil
-	for _, result := range rankedResults {
-		s.searchOptions = append(s.searchOptions, optionMap[result.Target])
+	for _, option := range s.Options {
+		if fuzzy.MatchFold(s.fuzzySearchString, option.Value) {
+			s.searchOptions = append(s.searchOptions, option)
+		}
 	}
 }
 
