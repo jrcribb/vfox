@@ -18,5 +18,8 @@ vfox current [<sdk-name>]           Show the current version of SDK
 vfox config [<key>] [<value>]       Setup, view config
 vfox cd [--plugin] [<sdk-name>]     Launch a shell in the VFOX_HOME, SDK directory, or plugin directory
 vfox upgrade                    Upgrade vfox to the latest version
+vfox --version                  显示当前安装的 vfox 版本
+vfox -v                         vfox --version 的别名
+vfox -V                         vfox --version 的别名
 vfox help                      Show this help message
 ```
