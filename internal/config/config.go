@@ -26,6 +26,7 @@ import (
 )
 
 type Config struct {
+	Plugin            Plugin             `yaml:"plugin"`
 	Proxy             *Proxy             `yaml:"proxy"`
 	Storage           *Storage           `yaml:"storage"`
 	Registry          *Registry          `yaml:"registry"`
@@ -38,6 +39,7 @@ const filename = "config.yaml"
 
 var (
 	DefaultConfig = &Config{
+		Plugin:            Plugin{HTTP: &HTTP{}},
 		Proxy:             EmptyProxy,
 		Storage:           EmptyStorage,
 		Registry:          EmptyRegistry,
@@ -64,6 +66,12 @@ func NewConfigWithPath(p string) (*Config, error) {
 	err = yaml.Unmarshal(content, config)
 	if err != nil {
 		return nil, err
+	}
+	if err := config.Plugin.HTTP.Validate(); err != nil {
+		return nil, err
+	}
+	if config.Plugin.HTTP == nil {
+		config.Plugin.HTTP = &HTTP{}
 	}
 	if config.Proxy == nil {
 		config.Proxy = EmptyProxy
@@ -93,6 +101,9 @@ func NewConfig(path string) (*Config, error) {
 }
 
 func (c *Config) SaveConfig(path string) error {
+	if err := c.Plugin.HTTP.Validate(); err != nil {
+		return err
+	}
 	p := filepath.Join(path, filename)
 	content, err := yaml.Marshal(c)
 	if err != nil {
@@ -115,7 +126,7 @@ func Merge(sharedConfig, userConfig *Config) *Config {
 		return ensureDefaults(sharedConfig)
 	}
 
-	result := &Config{}
+	result := &Config{Plugin: Plugin{HTTP: mergeHTTP(sharedConfig.Plugin.HTTP, userConfig.Plugin.HTTP)}}
 
 	// Merge Proxy: user overrides shared
 	// Note: userConfig.Proxy may be nil, which means "use shared"
@@ -144,6 +155,9 @@ func Merge(sharedConfig, userConfig *Config) *Config {
 func ensureDefaults(c *Config) *Config {
 	if c == nil {
 		return DefaultConfig
+	}
+	if c.Plugin.HTTP == nil {
+		c.Plugin.HTTP = &HTTP{}
 	}
 	if c.Proxy == nil {
 		c.Proxy = EmptyProxy

@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -57,7 +58,7 @@ func TestWithConfig(t *testing.T) {
 	Preload(s, &config.Proxy{
 		Enable: true,
 		Url:    "http://127.0.0.1",
-	})
+	}, nil)
 
 	if err := s.DoString(str); err != nil {
 		t.Error(err)
@@ -119,7 +120,7 @@ func eval(str string, t *testing.T) {
 	defer s.Close()
 
 	s.SetGlobal("jsonUrl", lua.LString(jsonUrl))
-	Preload(s, config.EmptyProxy)
+	Preload(s, config.EmptyProxy, nil)
 
 	if err := s.DoString(str); err != nil {
 		t.Error(err)
@@ -142,7 +143,7 @@ func TestUserAgentDefault(t *testing.T) {
 	ua := "vfox/0.7.0 vfox-nodejs/0.3.0"
 	setUserAgent(ls, ua)
 	defer ls.Close()
-	Preload(ls, config.EmptyProxy)
+	Preload(ls, config.EmptyProxy, nil)
 
 	script := fmt.Sprintf(`
 	local http = require("http")
@@ -180,7 +181,7 @@ func TestUserAgentAppend(t *testing.T) {
 	setUserAgent(ls, ua)
 	defer ls.Close()
 
-	Preload(ls, config.EmptyProxy)
+	Preload(ls, config.EmptyProxy, nil)
 
 	script := fmt.Sprintf(`
 	local http = require("http")
@@ -205,5 +206,82 @@ func TestUserAgentAppend(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for request")
+	}
+}
+
+// Exercise the same clients used by Lua, with short deadlines for local tests.
+func TestRequestTimeouts(t *testing.T) {
+	for _, proxyEnabled := range []bool{false, true} {
+		for _, method := range []string{"get", "head", "download_file"} {
+			for _, stallBody := range []bool{false, true} {
+				if method == "head" && stallBody {
+					continue
+				}
+				t.Run(fmt.Sprintf("proxy=%t/%s/body=%t", proxyEnabled, method, stallBody), func(t *testing.T) {
+					t.Parallel()
+					release := make(chan struct{})
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if stallBody {
+							w.Header().Set("Content-Length", "100")
+							w.WriteHeader(http.StatusOK)
+							w.(http.Flusher).Flush()
+						}
+						select {
+						case <-r.Context().Done():
+						case <-release:
+						case <-time.After(2 * time.Second):
+						}
+					}))
+					defer server.Close()
+					defer close(release)
+					m := newModule(&config.Proxy{Enable: proxyEnabled, Url: server.URL}, nil)
+					if m.client.Timeout != 30*time.Second || m.downloadClient.Timeout != 30*time.Minute {
+						t.Fatal("unexpected default request/download deadlines")
+					}
+					m.client.Timeout = 100 * time.Millisecond
+					m.downloadClient.Timeout = 100 * time.Millisecond
+					ls := lua.NewState()
+					defer ls.Close()
+					ls.SetGlobal("http", ls.SetFuncs(ls.NewTable(), m.luaMap()))
+					url := server.URL
+					if proxyEnabled {
+						url = "http://vfox-timeout.invalid/manifest"
+					}
+					ls.SetGlobal("url", lua.LString(url))
+					ls.SetGlobal("destination", lua.LString(filepath.Join(t.TempDir(), "download")))
+					script := fmt.Sprintf(`local resp, err = http.%s({url = url}); assert(resp == nil); assert(string.find(err, "deadline exceeded") or string.find(err, "timeout"), err)`, method)
+					if method == "download_file" {
+						script = `local err = http.download_file({url = url}, destination); assert(string.find(err, "deadline exceeded") or string.find(err, "timeout"), err)`
+					}
+					if err := ls.DoString(script); err != nil {
+						t.Fatal(err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestDownloadUsesSeparateDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		_, _ = w.Write([]byte("complete download"))
+	}))
+	defer server.Close()
+	m := newModule(config.EmptyProxy, nil)
+	m.client.Timeout = time.Millisecond
+	m.downloadClient.Timeout = time.Second
+	ls := lua.NewState()
+	defer ls.Close()
+	ls.SetGlobal("http", ls.SetFuncs(ls.NewTable(), m.luaMap()))
+	ls.SetGlobal("url", lua.LString(server.URL))
+	destination := filepath.Join(t.TempDir(), "download")
+	ls.SetGlobal("destination", lua.LString(destination))
+	if err := ls.DoString(`assert(http.download_file({url = url}, destination) == nil)`); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(destination)
+	if err != nil || string(body) != "complete download" {
+		t.Fatalf("download = %q, err = %v", body, err)
 	}
 }

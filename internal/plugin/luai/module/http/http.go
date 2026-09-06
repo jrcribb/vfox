@@ -19,10 +19,12 @@ package http
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/schollz/progressbar/v3"
 	"github.com/version-fox/vfox/internal/config"
@@ -31,8 +33,9 @@ import (
 )
 
 type Module struct {
-	proxy  *config.Proxy
-	client *http.Client
+	proxy          *config.Proxy
+	client         *http.Client
+	downloadClient *http.Client
 }
 
 // Get performs a http get request
@@ -189,7 +192,7 @@ func (m *Module) DownloadFile(L *lua.LState) int {
 		}
 	}
 	m.ensureUserAgent(L, req)
-	resp, err := m.client.Do(req)
+	resp, err := m.downloadClient.Do(req)
 	if err != nil {
 		L.Push(lua.LString(err.Error()))
 		return 1
@@ -246,21 +249,33 @@ func (m *Module) luaMap() map[string]lua.LGFunction {
 	}
 }
 
-func createModule(proxy *config.Proxy) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := &http.Client{}
-		if proxy.Enable {
-			uri, err := url.Parse(proxy.Url)
-			if err == nil {
-				transPort := &http.Transport{
-					Proxy: http.ProxyURL(uri),
-				}
-				client = &http.Client{
-					Transport: transPort,
-				}
-			}
+func newModule(proxy *config.Proxy, settings *config.HTTP) *Module {
+	requestTimeout, downloadTimeout := settings.Timeouts()
+	// Keep the standard transport defaults (including TLS handshake timeout)
+	// when using an explicit proxy as well as for direct requests.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   requestTimeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.ResponseHeaderTimeout = requestTimeout
+	if proxy.Enable {
+		if uri, err := url.Parse(proxy.Url); err == nil {
+			transport.Proxy = http.ProxyURL(uri)
 		}
-		m := &Module{proxy: proxy, client: client}
+	}
+	return &Module{
+		proxy:  proxy,
+		client: &http.Client{Transport: transport, Timeout: requestTimeout},
+		// Downloads need a larger total budget, while retaining the connection
+		// and response-header deadlines so an unresponsive server fails promptly.
+		downloadClient: &http.Client{Transport: transport, Timeout: downloadTimeout},
+	}
+}
+
+func createModule(proxy *config.Proxy, settings *config.HTTP) lua.LGFunction {
+	return func(L *lua.LState) int {
+		m := newModule(proxy, settings)
 		t := L.NewTable()
 		L.SetFuncs(t, m.luaMap())
 		L.Push(t)
@@ -281,6 +296,6 @@ func (m *Module) ensureUserAgent(L *lua.LState, req *http.Request) {
 	}
 }
 
-func Preload(L *lua.LState, proxy *config.Proxy) {
-	L.PreloadModule("http", createModule(proxy))
+func Preload(L *lua.LState, proxy *config.Proxy, settings *config.HTTP) {
+	L.PreloadModule("http", createModule(proxy, settings))
 }

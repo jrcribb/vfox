@@ -3,6 +3,26 @@
 `vfox` provides a simple HTTP library, currently supporting only GET and HEAD requests and download file. In the Lua script, you can
 use `require("http")` to access it. For example:
 
+GET and HEAD requests default to a 30-second total timeout, including reading the response body. File downloads default to a separate 30-minute total timeout. The connection and response-header timeouts use `plugin.http.timeout` for both types of request, including when a proxy is configured. Timeouts are returned through the existing Lua error return value.
+
+Override these settings in `config.yaml`:
+
+```yaml
+plugin:
+  http:
+    timeout: 60s
+    downloadTimeout: 45m
+```
+
+Or use the CLI:
+
+```shell
+vfox config plugin.http.timeout 60s
+vfox config plugin.http.downloadTimeout 45m
+```
+
+Values use duration units such as `ms`, `s`, `m`, or `h`. Omitted fields and `0s` inherit the corresponding shared configuration value, falling back to 30 seconds and 30 minutes respectively. Zero does not disable timeout protection. Negative and invalid durations are rejected. `vfox config --unset plugin.http.timeout` restores inheritance for that setting.
+
 **Usage**
 
 ```lua

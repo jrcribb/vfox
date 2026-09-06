@@ -32,7 +32,7 @@ type PreloadOptions struct {
 }
 
 func Preload(L *lua.LState, options *PreloadOptions) {
-	http.Preload(L, options.Config.Proxy)
+	http.Preload(L, options.Config.Proxy, options.Config.Plugin.HTTP)
 	json.Preload(L)
 	html.Preload(L)
 	string.Preload(L)

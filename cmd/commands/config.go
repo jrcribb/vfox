@@ -133,7 +133,16 @@ func configSet(v reflect.Value, keys []string, value any) error {
 					v.Field(i).SetBool(parseBool)
 				case reflect.Int64:
 					value := fmt.Sprintf("%v", value)
-					if v.Field(i).Type() == reflect.TypeOf(cache.Duration(0)) {
+					if v.Field(i).Type() == reflect.TypeOf(time.Duration(0)) {
+						duration, err := time.ParseDuration(value)
+						if err != nil {
+							return err
+						}
+						if duration < 0 {
+							return fmt.Errorf("timeout must not be negative")
+						}
+						v.Field(i).SetInt(int64(duration))
+					} else if v.Field(i).Type() == reflect.TypeOf(cache.Duration(0)) {
 						if value == "-1" {
 							v.Field(i).SetInt(-1)
 						} else {
